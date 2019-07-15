@@ -35,7 +35,7 @@ func Setup(module, function string) error {
 }
 
 // Request makes a request towards initialized Python interpreter.
-func Request(path string, query map[string][]string) (status int, respBody []byte, err error) {
+func Request(path string, query map[string]string) (status int, response []byte, err error) {
 	if requestPointer == nil {
 		status = 5
 		err = errors.New("Setup must be called before Request")
@@ -62,7 +62,8 @@ func Request(path string, query map[string][]string) (status int, respBody []byt
 	}
 
 	status = int(C.PyLong_AsLong(C.PyTuple_GetItem(out, 0)))
-	respBody = []byte(goString(C.PyTuple_GetItem(out, 1)))
+	response = []byte(goString(C.PyTuple_GetItem(out, 1)))
+
 	C.Py_DecRef(out)
 	return
 }
@@ -154,19 +155,18 @@ func callPy(f, a, kw *C.PyObject) (res *C.PyObject, err error) {
 
 	pyErr := C.PyErr_Occurred()
 	if pyErr != nil {
-		// would be nice to capture this and return as error string
 		C.PyErr_Print()
-		err = errors.New("python exception")
+		err = fmt.Errorf("python exception: %+v", pyErr)
 	}
 
 	return res, err
 }
 
 // convert a map of string: strings to a python dictionary
-func mapToPyDict(m map[string][]string) *C.PyObject {
+func mapToPyDict(m map[string]string) *C.PyObject {
 	pyDict := map[*C.PyObject]*C.PyObject{}
 	for key, values := range m {
-		pyDict[pythonString(key)] = pythonListOfStrings(values)
+		pyDict[pythonString(key)] = pythonString(values)
 	}
 	return pythonDict(pyDict)
 }
