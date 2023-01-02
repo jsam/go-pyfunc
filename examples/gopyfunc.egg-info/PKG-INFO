@@ -1,0 +1,14 @@
+Metadata-Version: 2.1
+Name: gopyfunc
+Version: 0.0.1
+Summary: example python worker
+Home-page: https://github.com/jsam/go-pyfunc/
+Download-URL: https://github.com/jsam/go-pyfunc/archive/main.zip
+Author: Sam Dash
+Author-email: contact@justsam.io
+Classifier: Development Status :: 2 - Pre-Alpha
+Classifier: Operating System :: POSIX :: Linux
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Programming Language :: Python :: 3
+Classifier: Topic :: Software Development
+Classifier: Topic :: Utilities

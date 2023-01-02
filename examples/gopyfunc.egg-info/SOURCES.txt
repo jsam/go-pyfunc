@@ -1,0 +1,6 @@
+setup.py
+worker.py
+gopyfunc.egg-info/PKG-INFO
+gopyfunc.egg-info/SOURCES.txt
+gopyfunc.egg-info/dependency_links.txt
+gopyfunc.egg-info/top_level.txt

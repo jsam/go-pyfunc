@@ -2,7 +2,7 @@
 package gopyfunc
 
 /*
-#cgo pkg-config: python-3.7
+#cgo pkg-config: python3-embed
 #include "Python.h"
 #include <stdlib.h>
 */
@@ -16,27 +16,35 @@ import (
 )
 
 var (
-	requestPointer *C.PyObject
+	programName *C.wchar_t
+	pythonPath  *C.wchar_t
+	pythonHome  *C.wchar_t
 )
 
-// Setup prepares Python interpreter and request/response communication.
-func Setup(module, function string) error {
-	if module == "" || function == "" {
-		return errors.New("both parameters Python module and function need to be supplied")
-	}
-
+// PyInit prepares Python interpreter and request/response communication.
+func PyInit() error {
 	if err := initPython(); err != nil {
 		return err
 	}
-
-	var reqMod *C.PyObject = getPyModule(module)
-	requestPointer = getPyAttr(reqMod, function)
 	return nil
 }
 
+func FnPtr(module, function string) (*C.PyObject, error) {
+	if module == "" || function == "" {
+		return nil, errors.New("both parameters Python module and function need to be supplied")
+	}
+
+	var reqMod *C.PyObject = getPyModule(module)
+	attrPtr := getPyAttr(reqMod, function)
+	if attrPtr != nil {
+		return attrPtr, nil
+	}
+	return nil, errors.New("could not find function")
+}
+
 // Request makes a request towards initialized Python interpreter.
-func Request(path string, query map[string]string) (status int, response []byte, err error) {
-	if requestPointer == nil {
+func Request(funcPtr *C.PyObject, path string, query map[string]string) (status int, response []byte, err error) {
+	if funcPtr == nil {
 		status = 5
 		err = errors.New("Setup must be called before Request")
 		return
@@ -52,7 +60,7 @@ func Request(path string, query map[string]string) (status int, response []byte,
 		pythonString(path),
 		mapToPyDict(query),
 	})
-	out, err := callPy(requestPointer, args, nil)
+	out, err := callPy(funcPtr, args, nil)
 
 	if err != nil {
 		status = 5
@@ -78,12 +86,12 @@ func initPython() error {
 	}
 
 	// make sure the GIL is correctly initialized
-	if C.PyEval_ThreadsInitialized() == 0 {
-		C.PyEval_InitThreads()
-	}
-	if C.PyEval_ThreadsInitialized() == 0 {
-		return errors.New("failed to initialize Python threads")
-	}
+	// if C.PyEval_ThreadsInitialized() == 0 {
+	// 	C.PyEval_InitThreads()
+	// }
+	// if C.PyEval_ThreadsInitialized() == 0 {
+	// 	return errors.New("failed to initialize Python threads")
+	// }
 	C.PyEval_ReleaseThread(C.PyGILState_GetThisThreadState())
 
 	return nil
@@ -232,4 +240,97 @@ func pythonString(s string) *C.PyObject {
 
 func goString(o *C.PyObject) string {
 	return C.GoString(C.PyUnicode_AsUTF8(o))
+}
+
+func GetSysPath() string {
+	cname := C.CString("platform")
+	defer C.free(unsafe.Pointer(cname))
+
+	sysPath := C.PySys_GetObject(cname)
+	return goString(sysPath)
+}
+
+func PyRun_SimpleString(command string) int {
+	ccommand := C.CString(command)
+	defer C.free(unsafe.Pointer(ccommand))
+
+	// C.PyRun_SimpleString is a macro, using C.PyRun_SimpleStringFlags instead
+	return int(C.PyRun_SimpleStringFlags(ccommand, nil))
+}
+
+func Py_GetPath() (string, error) {
+	wcname := C.Py_GetPath()
+	if wcname == nil {
+		return "", nil
+	}
+	cname := C.Py_EncodeLocale(wcname, nil)
+	if cname == nil {
+		return "", fmt.Errorf("fail to call Py_EncodeLocale")
+	}
+	defer C.PyMem_Free(unsafe.Pointer(cname))
+
+	return C.GoString(cname), nil
+}
+
+func Py_SetPath(path string) error {
+	cpath := C.CString(path)
+	defer C.free(unsafe.Pointer(cpath))
+
+	newPath := C.Py_DecodeLocale(cpath, nil)
+	if newPath == nil {
+		return fmt.Errorf("fail to call Py_DecodeLocale on '%s'", path)
+	}
+	C.Py_SetPath(newPath)
+
+	C.PyMem_RawFree(unsafe.Pointer(pythonPath))
+	pythonHome = newPath
+
+	return nil
+}
+
+// Py_SetPythonHome : https://docs.python.org/3/c-api/init.html#c.Py_SetPythonHome
+func Py_SetPythonHome(home string) error {
+	chome := C.CString(home)
+	defer C.free(unsafe.Pointer(chome))
+
+	newHome := C.Py_DecodeLocale(chome, nil)
+	if newHome == nil {
+		return fmt.Errorf("fail to call Py_DecodeLocale on '%s'", home)
+	}
+	C.Py_SetPythonHome(newHome)
+
+	C.PyMem_RawFree(unsafe.Pointer(pythonHome))
+	pythonHome = newHome
+
+	return nil
+}
+
+// Py_GetPythonHome : https://docs.python.org/3/c-api/init.html#c.Py_GetPythonHome
+func Py_GetPythonHome() (string, error) {
+	wchome := C.Py_GetPythonHome()
+	if wchome == nil {
+		return "", nil
+	}
+	chome := C.Py_EncodeLocale(wchome, nil)
+	if chome == nil {
+		return "", fmt.Errorf("fail to call Py_EncodeLocale")
+	}
+	defer C.PyMem_Free(unsafe.Pointer(chome))
+
+	return C.GoString(chome), nil
+}
+
+func AddSysPath(path string) {
+	importStatement := "import sys"
+	sysPath := fmt.Sprintf("sys.path.append('%s')", path)
+
+	pyStr := fmt.Sprintf("%s\n%s\n", importStatement, sysPath)
+	result := PyRun_SimpleString(pyStr)
+	pyErr := C.PyErr_Occurred()
+	if pyErr != nil {
+		C.PyErr_Print()
+		err := fmt.Errorf("python exception: %+v", pyErr)
+		fmt.Println(err)
+	}
+	fmt.Println(result)
 }
